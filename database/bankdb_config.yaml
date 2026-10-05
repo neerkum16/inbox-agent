@@ -1,0 +1,298 @@
+# ============================================================================
+# BANKDB SYNTHETIC DATA GENERATOR CONFIGURATION
+# ============================================================================
+
+database:
+  name: bankdb
+  host: localhost
+  port: 5432
+  user: postgres
+
+bank:
+  sort_code: "123456"
+
+random:
+  seed: 42
+
+customer:
+  locale: en_GB
+  starting_customer_number: 1000000001
+
+  status_weights:
+    ACTIVE: 90
+    PENDING: 5
+    SUSPENDED: 1
+    PENDING_DELETE: 3
+    DELETED: 1
+    DECEASED: 0
+
+  # PENDING now requires a reason (KYC not yet complete) — see
+  # lifecycle_rules below, which also gives PENDING customers zero
+  # allowed accounts, since onboarding isn't finished.
+  status_reason_mapping:
+    PENDING:
+      - KYC_INCOMPLETE
+    SUSPENDED:
+      - COMPLIANCE_HOLD
+    PENDING_DELETE:
+      - CUSTOMER_DELETE_REQUESTED
+    DELETED:
+      - RETENTION_PERIOD_EXPIRED
+    DECEASED:
+      - DECEASED_ESTATE
+
+account:
+  starting_account_number: 10000001
+
+  minimum_per_customer: 1
+  maximum_per_customer: 5
+
+  account_types:
+    - CURRENT
+    - SAVINGS
+    - ISA
+    - LOAN
+    - MORTGAGE
+
+  interest_rates:
+    CURRENT: 0.0
+    SAVINGS: 1.5
+    ISA: 2.5
+    LOAN: 5.5
+    MORTGAGE: 3.5
+
+  overdraft_limits:
+    CURRENT: 1000.0
+    SAVINGS: 0.0
+    ISA: 0.0
+    LOAN: 0.0
+    MORTGAGE: 0.0
+
+  status_weights:
+    ACTIVE: 85
+    DORMANT: 8
+    FROZEN: 4
+    PENDING_CLOSE: 2
+    CLOSED: 1
+
+  status_reason_mapping:
+    FROZEN:
+      - FRAUD_SUSPECTED
+      - COURT_ORDER
+      - CUSTOMER_REQUESTED
+    PENDING_CLOSE:
+      - ACCOUNT_CLOSURE_REQUESTED
+    CLOSED:
+      - ACCOUNT_CLOSURE_REQUESTED
+
+  # LOAN and MORTGAGE ranges are negative: these are liability accounts
+  # and must carry a negative balance while active (see chk_loan_balance_sign
+  # in bankdb_schema.sql). CLOSED loan/mortgage balances are forced to
+  # exactly 0 by the generator and by chk_closed_loan_zeroed, regardless
+  # of this range.
+  balance_rules:
+    CURRENT:
+      minimum: -1000.00
+      maximum: 25000.00
+    SAVINGS:
+      minimum: 100.00
+      maximum: 25000.00
+    ISA:
+      minimum: 100.00
+      maximum: 25000.00
+    LOAN:
+      minimum: -500000.00
+      maximum: -1000.00
+    MORTGAGE:
+      minimum: -500000.00
+      maximum: -1000.00
+
+lifecycle_rules:
+  customer_status_account_constraints:
+    ACTIVE:
+      allowed_account_statuses:
+        - ACTIVE
+        - DORMANT
+        - FROZEN
+        - PENDING_CLOSE
+        - CLOSED
+    # PENDING customers have not completed onboarding, so no accounts
+    # are generated for them at all. account_generator.py treats an
+    # empty list here as "generate zero accounts for this customer",
+    # not as a configuration error.
+    PENDING:
+      allowed_account_statuses: []
+    SUSPENDED:
+      allowed_account_statuses:
+        - ACTIVE
+        - DORMANT
+        - FROZEN
+    PENDING_DELETE:
+      allowed_account_statuses:
+        - PENDING_CLOSE
+        - CLOSED
+    DELETED:
+      allowed_account_statuses:
+        - CLOSED
+    DECEASED:
+      allowed_account_statuses:
+        - PENDING_CLOSE
+        - CLOSED
+
+transactions:
+  minimum_per_account: 5
+  maximum_per_account: 50
+
+  # Financial transaction types generated per account
+  financial_transaction_types:
+    - CREDIT
+    - DEBIT
+
+  # Amount ranges for financial transaction types. Previously hardcoded
+  # in transaction_history_generator.py; now config-driven like every
+  # other tunable generation parameter.
+  transaction_amount_ranges:
+    CREDIT:
+      minimum: 10.00
+      maximum: 10000.00
+    DEBIT:
+      minimum: 1.00
+      maximum: 5000.00
+
+  # All transaction and lifecycle event definitions.
+  # These descriptions are written directly to TRANSACTION_HISTORY.
+  transaction_definitions:
+
+    CREDIT:
+      description: Credit transaction posted to account
+
+    DEBIT:
+      description: Debit transaction posted to account
+
+    # Account lifecycle events
+    OFA:
+      description: Account opened
+
+    # OUA (Update Account) is reserved for a future account-update event.
+    # No generator currently emits it; kept in the schema's allowed
+    # transaction types for forward compatibility.
+    OUA:
+      description: Account details updated
+
+    OSC:
+      description: Account status changed
+
+    # Customer lifecycle events
+    OCC:
+      description: Customer relationship created
+
+    ODC:
+      description: Customer relationship deleted
+
+  # Maps failed financial transaction statuses to valid TRANSACTION reason codes
+  failure_reason_mapping:
+
+    DECLINED:
+      - ACCOUNT_FROZEN
+      - INSUFFICIENT_FUNDS
+
+    REJECTED:
+      - ACCOUNT_CLOSED
+
+  # Probability that a financial transaction against a frozen account
+  # is generated as DECLINED.
+  frozen_declined_rate: 0.20
+
+  # Maximum historical activity window for dormant accounts.
+  dormant_cap_days: 365
+
+reason_codes:
+  - reason_code: FRAUD_SUSPECTED
+    applies_to: ACCOUNT_STATUS
+    description: Account frozen due to suspected fraudulent activity
+    customer_facing_text: >
+      Your account has been temporarily restricted for security review.
+
+  - reason_code: COURT_ORDER
+    applies_to: ACCOUNT_STATUS
+    description: Account restricted by a court or legal order
+    customer_facing_text: >
+      Your account has been restricted by legal order.
+
+  - reason_code: CUSTOMER_REQUESTED
+    applies_to: ACCOUNT_STATUS
+    description: Account restricted at customer request
+    customer_facing_text: >
+      Your account has been restricted as requested.
+
+  - reason_code: ACCOUNT_CLOSURE_REQUESTED
+    applies_to: ACCOUNT_STATUS
+    description: Account closure requested and processing is in progress or completed
+    customer_facing_text: >
+      Your account closure request is being processed.
+
+  - reason_code: KYC_INCOMPLETE
+    applies_to: CUSTOMER_STATUS
+    description: Customer onboarding pending KYC completion
+    customer_facing_text: >
+      Your account application is being processed.
+
+  - reason_code: COMPLIANCE_HOLD
+    applies_to: CUSTOMER_STATUS
+    description: Customer relationship suspended for compliance review
+    customer_facing_text: >
+      Your account access is temporarily restricted.
+
+  - reason_code: DECEASED_ESTATE
+    applies_to: CUSTOMER_STATUS
+    description: Customer confirmed deceased and estate relationship is winding down
+    customer_facing_text: >
+      We are processing changes to this account.
+
+  - reason_code: CUSTOMER_DELETE_REQUESTED
+    applies_to: CUSTOMER_STATUS
+    description: Customer requested deletion of the banking relationship
+    customer_facing_text: >
+      Your request to close your banking relationship is being processed.
+
+  - reason_code: RETENTION_PERIOD_EXPIRED
+    applies_to: CUSTOMER_STATUS
+    description: Customer record deleted after retention and closure requirements were completed
+    customer_facing_text: >
+      Your banking relationship has been closed.
+
+  - reason_code: ACCOUNT_FROZEN
+    applies_to: TRANSACTION
+    description: Transaction declined because the account is frozen
+    customer_facing_text: >
+      This transaction could not be completed.
+
+  - reason_code: INSUFFICIENT_FUNDS
+    applies_to: TRANSACTION
+    description: Transaction declined due to insufficient funds
+    customer_facing_text: >
+      This transaction could not be completed due to insufficient funds.
+
+  - reason_code: ACCOUNT_CLOSED
+    applies_to: TRANSACTION
+    description: Transaction rejected because the account is closed
+    customer_facing_text: >
+      This account is no longer active.
+
+status_history:
+  enabled: true
+  max_entries_per_entity: 3
+
+generation:
+  customers: 1000
+
+output:
+  directory: output
+
+files:
+  customer: customer.csv
+  account: account.csv
+  control: control.csv
+  reason_code: reason_code.csv
+  status_history: status_history.csv
+  transaction_history: transaction_history.csv

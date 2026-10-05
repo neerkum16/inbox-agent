@@ -1,0 +1,1 @@
+"""Inbox-agent application package."""
